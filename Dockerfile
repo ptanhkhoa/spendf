@@ -4,10 +4,21 @@ FROM python:3.9-slim
 # Set the working directory in the container
 WORKDIR /app
 
+# Install system dependencies required for SpaCy and other libraries
+RUN apt-get update && apt-get install -y \
+    build-essential \
+    libssl-dev \
+    libffi-dev \
+    libbz2-dev \
+    liblzma-dev \
+    zlib1g-dev \
+    python3-dev \
+    && rm -rf /var/lib/apt/lists/*
+
 # Copy the current directory contents into the container
 COPY . /app
 
-# Install dependencies from the requirements.txt
+# Install Python dependencies
 RUN pip install --no-cache-dir -r requirements.txt
 
 # Install SpaCy model (en_core_web_sm)

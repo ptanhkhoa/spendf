@@ -1,72 +1,73 @@
-import re
 from flask import Flask, request, jsonify
-from textblob import TextBlob
-import spacy
+from transformers import AutoTokenizer, AutoModelForTokenClassification, pipeline
+import underthesea
 
-# Load SpaCy model
-nlp = spacy.load("en_core_web_sm")
-
-# List of popular Vietnamese banks (extendable)
-popular_banks = [
-    "vietcombank", "vcb", "techcombank", "tcb", "agribank", "vib", "mbbank", "acb", "bidv", "vpbank",
-    "vietinbank", "scb", "shinhan", "sacombank", "eximbank", "abbank", "hdbank", "ocb", "vietbank"
-]
-
-# Flask app initialization
 app = Flask(__name__)
 
-# Function to handle general user mistakes using TextBlob (spell check)
-def correct_mistakes(text):
-    blob = TextBlob(text)
-    return str(blob.correct())  # TextBlob corrects common spelling mistakes
+# Load PhoBERT model and tokenizer
+MODEL_NAME = "vinai/phobert-large"
+tokenizer = AutoTokenizer.from_pretrained(MODEL_NAME)
+model = AutoModelForTokenClassification.from_pretrained(MODEL_NAME)
 
-# Function to classify entities (amount, bank, interest, term)
-def classify_entities(text):
-    text = correct_mistakes(text)  # First, correct any spelling mistakes
+# Define processing pipeline
+ner_pipeline = pipeline("ner", model=model, tokenizer=tokenizer, aggregation_strategy="simple")
 
-    entities = {"term": None, "interest": None, "amount": None, "bank": None}
+# Popular Vietnamese banks and aliases
+BANKS = {
+    "vietcombank": ["vcb", "ngoai thuong", "vietcombank"],
+    "techcombank": ["tcb", "ky thuong", "techcombank"],
+    "agribank": ["nong nghiep", "agribank"],
+    "vib": ["quoc te", "vib"],
+    # Add more banks here...
+}
 
-    # Check for banks (using exact or partial match)
-    for bank in popular_banks:
-        if re.search(r'\b' + re.escape(bank) + r'\b', text, re.IGNORECASE):
-            entities["bank"] = bank
-            break  # stop after finding the first match
+def normalize_number(text):
+    """Convert Vietnamese text numbers to integers (e.g., 'ba triệu' → 3000000)."""
+    return underthesea.text_to_number(text)
 
-    # Detect term (e.g., "4 tháng", "4 months")
-    term_match = re.search(r'(\d+)\s*(tháng|month|months)', text, re.IGNORECASE)
-    if term_match:
-        entities["term"] = term_match.group(1)  # Capture the number (term)
+def detect_missing_fields(entities):
+    """Detect missing fields from extracted entities."""
+    required_fields = {"amount", "term", "interest", "bank"}
+    missing = required_fields - set(entities.keys())
+    return list(missing)
 
-    # Detect interest (percentage)
-    interest_match = re.search(r'(\d+)\s*(%|percent)', text, re.IGNORECASE)
-    if interest_match:
-        entities["interest"] = interest_match.group(0)  # Capture the interest rate
+@app.route("/process", methods=["POST"])
+def process_text():
+    data = request.json
+    text = data.get("input", "")
+    if not text:
+        return jsonify({"error": "Input text is required"}), 400
 
-    # Detect amount (e.g., "3 triệu", "3 million", etc.)
-    amount_match = re.search(r'(\d+)\s*(trieu|million|thousand|tram|k|usd|vnd)', text, re.IGNORECASE)
-    if amount_match:
-        entities["amount"] = amount_match.group(1)  # Capture the amount
+    # Extract entities using PhoBERT
+    ner_results = ner_pipeline(text)
+    entities = {"amount": None, "term": None, "interest": None, "bank": None}
 
-    return entities
+    # Process recognized entities
+    for entity in ner_results:
+        label = entity["entity_group"].lower()
+        value = entity["word"].strip()
+        if label == "amount":
+            entities["amount"] = normalize_number(value)
+        elif label == "term":
+            entities["term"] = normalize_number(value)
+        elif label == "interest":
+            entities["interest"] = value
+        elif label == "bank":
+            for bank, aliases in BANKS.items():
+                if any(alias in value.lower() for alias in aliases):
+                    entities["bank"] = bank
+                    break
 
-@app.route("/parse", methods=["POST"])
-def parse():
-    data = request.get_json()
-    text = data.get("text", "")
+    # Detect missing fields
+    missing_fields = detect_missing_fields(entities)
 
-    entities = classify_entities(text)
-    
-    # Check for missing entities
-    missing_fields = [key for key, value in entities.items() if value is None]
-
-    response = {
+    return jsonify({
         "entities": entities,
+        "message": f"Missing information: {', '.join(missing_fields)}. Please provide the missing details."
+        if missing_fields else "All required fields are provided.",
         "missing_fields": missing_fields,
-        "message": f"Missing information: {', '.join(missing_fields)}. Please provide the missing details." if missing_fields else "All information received.",
-        "version": "1.1.1"
-    }
-
-    return jsonify(response)
+        "version": "1.0.0"
+    })
 
 if __name__ == "__main__":
-    app.run(debug=True)
+    app.run(host="0.0.0.0", port=8080)

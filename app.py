@@ -14,6 +14,9 @@ popular_banks = [
 # Flask app initialization
 app = Flask(__name__)
 
+# Track version
+version = "1.1.0"  # You can update this whenever you make changes to the app
+
 def classify_entities(text):
     doc = nlp(text)
     
@@ -49,7 +52,8 @@ def parse():
     
     response = {
         "entities": entities,
-        "missing_fields": missing_fields
+        "missing_fields": missing_fields,
+        "version": version  # Return the version of the app
     }
 
     # Check if the bank is not recognized

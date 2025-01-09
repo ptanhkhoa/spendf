@@ -1,5 +1,6 @@
 import spacy
 from flask import Flask, request, jsonify
+import re
 
 # Load SpaCy model (ensure it's installed in the environment)
 nlp = spacy.load("en_core_web_sm")  # You can adjust the language model if needed
@@ -21,10 +22,11 @@ def classify_entities(text):
     # Simple rules to classify entities based on the text
     for ent in doc.ents:
         if ent.label_ == "CARDINAL":
-            # Check if it's an amount or a term based on context
-            if "tháng" in text or "month" in text:  # for term
+            # If the word "tháng" is in the sentence, classify as term
+            if "tháng" in text or "month" in text:  # term context
                 entities["term"] = ent.text
-            elif "trieu" in text or "million" in text:  # for amount
+            # If the word "trieu", "million", "tram", "thousand" is in the sentence, classify as amount
+            elif "trieu" in text or "million" in text or "tram" in text or "thousand" in text:  # amount context
                 entities["amount"] = ent.text
         elif ent.label_ == "PERCENT":
             # Recognize interest
